@@ -11,6 +11,56 @@ sign up → (optionally tweak the style JSON) → new asset (title + description
         → Generate → image appears in library → download
 ```
 
+## A look around
+
+Captured from the running app. The assets in the library and detail shots are
+real `gpt-image-1` output; the grid on the landing page is illustrative artwork
+shipped in [public/marketing/](public/marketing/).
+
+**Landing** — the pitch, over a grid of assets that share one style JSON.
+
+![Asset Forge landing page](docs/screenshots/01-landing.png)
+
+**New asset** — a title, an optional description, and one button. That is the
+entire authoring surface.
+
+![The new asset form](docs/screenshots/05-new-asset.png)
+
+**Library** — every asset you have generated, private to your account and served
+through short-lived signed URLs.
+
+![The asset library](docs/screenshots/04-library.png)
+
+**Asset detail** — the transparent PNG on a checkerboard, with the model that
+made it, ready to download and drop into an engine.
+
+![An asset detail page](docs/screenshots/08-asset-detail.png)
+
+**Style** — the one JSON object folded into every prompt. Add a key, and it
+becomes a style directive.
+
+![The style JSON editor](docs/screenshots/06-style.png)
+
+**Billing, on a free account** — 5 generations, and the Pro plan carrying
+PayPal's own Subscribe and card buttons, rendered by the PayPal JS SDK.
+
+![The billing page on a free account](docs/screenshots/09-billing-free.png)
+
+**PayPal checkout** — clicking Subscribe opens PayPal's hosted popup. The
+subscription is created with the user id as `custom_id`, which is what later
+lets the webhook match the payment back to an account.
+
+<img src="docs/screenshots/10-paypal-checkout.png" alt="The PayPal checkout popup" width="380">
+
+**Billing, after upgrading** — the plan flips to Pro, the usage counter resets,
+and cancelling is a link straight into PayPal. Assets are never deleted.
+
+![The billing page on a Pro account](docs/screenshots/07-billing.png)
+
+**Pricing** — the public plan comparison.
+
+![The pricing page](docs/screenshots/02-pricing.png)
+
 ## Stack
 
 Next.js 16 (App Router, RSC, Server Actions) · TypeScript · Bun · Tailwind v4 · shadcn/ui ·

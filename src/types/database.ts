@@ -47,6 +47,36 @@ export type Database = {
         };
         Relationships: [];
       };
+      webhook_events: {
+        Row: {
+          id: string;
+          provider: string;
+          event_id: string;
+          event_type: string;
+          payload: Json;
+          received_at: string;
+          processed_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          provider?: string;
+          event_id: string;
+          event_type: string;
+          payload: Json;
+          received_at?: string;
+          processed_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          provider?: string;
+          event_id?: string;
+          event_type?: string;
+          payload?: Json;
+          received_at?: string;
+          processed_at?: string | null;
+        };
+        Relationships: [];
+      };
       assets: {
         Row: {
           id: string;

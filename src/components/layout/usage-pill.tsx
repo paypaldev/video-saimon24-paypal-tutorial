@@ -3,15 +3,15 @@ import { cn } from "@/lib/utils";
 import type { Quota } from "@/lib/billing/quota";
 
 /**
- * Usage meter in the app shell. Turns amber at the limit and links to
- * pricing (the upgrade CTA lives there until PayPal lands in Phase 2).
+ * Usage meter in the app shell. Turns amber at the limit and links to the
+ * billing page, where the PayPal checkout lives.
  */
 export function UsagePill({ quota }: { quota: Quota }) {
   const atLimit = quota.remaining === 0;
 
   return (
     <Link
-      href="/pricing"
+      href="/app/billing"
       className={cn(
         "rounded-full border px-3 py-1 text-xs font-medium tabular-nums transition-colors",
         atLimit

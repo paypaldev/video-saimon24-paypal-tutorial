@@ -9,6 +9,7 @@
     "lint": "eslint .",
     "test": "bun test",
     "typecheck": "tsc --noEmit",
+    "paypal:plan": "bun run scripts/create-paypal-plan.ts",
     "ci": "eslint . && tsc --noEmit && next build"
   },
   "dependencies": {

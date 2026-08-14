@@ -261,6 +261,34 @@ create trigger profiles_protect_columns
   for each row execute function public.protect_profile_columns();
 ```
 
+### 4c. Webhook idempotency log (= `supabase/migrations/0003_paypal.sql`)
+
+Only needed if you are turning on PayPal billing (see the **PayPal setup** section of the README).
+Running it early is harmless.
+
+```sql
+create table public.webhook_events (
+  id uuid primary key default gen_random_uuid(),
+  provider text not null default 'paypal',
+  event_id text not null unique,
+  event_type text not null,
+  payload jsonb not null,
+  received_at timestamptz not null default now(),
+  processed_at timestamptz
+);
+
+create index idx_webhook_events_received on public.webhook_events (received_at desc);
+
+-- RLS on with NO policies: invisible to anon and authenticated. Only the
+-- service role (which bypasses RLS) writes here, from the webhook route.
+alter table public.webhook_events enable row level security;
+revoke all on public.webhook_events from anon, authenticated;
+```
+
+The `protect_profile_columns()` guard from 4b checks `current_user = 'authenticated'`, so the
+webhook — which connects as `service_role` — can still write `plan`, `plan_renews_at`,
+`generations_used` and `paypal_subscription_id` while a signed-in user cannot.
+
 ## 5. Verify
 
 Quick sanity checks in the dashboard:
@@ -274,8 +302,9 @@ asset and confirm a row in `assets` plus a PNG under `assets/{your-user-id}/` in
 
 ## What you did NOT need
 
-- **Service role key** — Phase 1 never bypasses RLS; signed URLs are created with the user's own
-  session. The service key only arrives with the PayPal webhook in Phase 2.
+- **Service role key** — the app itself never bypasses RLS; signed URLs are created with the
+  user's own session. You only need the service key if you turn on PayPal billing, where the
+  webhook has no user session (README → PayPal setup).
 - **Dashboard-created storage policies** — the SQL above created them.
 - **Email templates / SMTP** — Supabase's built-in email is fine for dev volumes.
 

@@ -6,7 +6,8 @@ export type ErrorCode =
   | "quota_exceeded"
   | "provider_error"
   | "storage_error"
-  | "not_found";
+  | "not_found"
+  | "billing_unavailable";
 
 export type ApiError = {
   error: { code: ErrorCode; message: string } & Record<string, unknown>;

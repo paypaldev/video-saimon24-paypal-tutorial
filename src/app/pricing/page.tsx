@@ -1,103 +1,58 @@
 import type { Metadata } from "next";
-import { Check } from "lucide-react";
 import { MarketingNav } from "@/components/layout/marketing-nav";
+import { PlanCard } from "@/components/billing/plan-card";
 import { PLANS } from "@/lib/billing/plans";
+import { getPaypalConfig } from "@/lib/paypal/config";
+import { getUser } from "@/lib/auth/session";
 import { Button, ButtonLink } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 
 export const metadata: Metadata = { title: "Pricing — Asset Forge" };
 
-const FREE_FEATURES = [
-  `${PLANS.free.generations} generations`,
-  "Your own style JSON",
-  "Private asset library",
-  "Transparent PNG downloads",
-];
+export default async function PricingPage() {
+  // When PayPal is not configured, the Pro plan stays a "Coming soon" — never
+  // a checkout button that leads nowhere.
+  const checkoutEnabled = getPaypalConfig() !== null;
+  const user = await getUser();
 
-const PRO_FEATURES = [
-  `${PLANS.pro.generations} generations per month`,
-  "Everything in Free",
-  "Priority generation",
-];
-
-export default function PricingPage() {
   return (
     <div className="min-h-screen">
       <MarketingNav />
       <main className="mx-auto max-w-3xl px-4 py-16">
-        <h1 className="text-center text-3xl font-bold tracking-tight">
-          Simple pricing
-        </h1>
+        <h1 className="text-center text-3xl font-bold tracking-tight">Simple pricing</h1>
         <p className="mt-2 mb-10 text-center text-muted-foreground">
           Start free. Upgrade when your library outgrows it.
         </p>
-        <div className="grid gap-6 sm:grid-cols-2">
-          <Card>
-            <CardHeader>
-              <CardTitle>{PLANS.free.name}</CardTitle>
-              <CardDescription>For trying the loop end to end.</CardDescription>
-              <p className="text-3xl font-bold">
-                ${PLANS.free.priceUsd}
-                <span className="text-sm font-normal text-muted-foreground">
-                  /forever
-                </span>
-              </p>
-            </CardHeader>
-            <CardContent className="flex flex-1 flex-col gap-4">
-              <ul className="flex flex-col gap-2 text-sm">
-                {FREE_FEATURES.map((feature) => (
-                  <li key={feature} className="flex items-center gap-2">
-                    <Check className="size-4 text-success" />
-                    {feature}
-                  </li>
-                ))}
-              </ul>
-              <ButtonLink
-                variant="outline"
-                className="mt-auto"
-                href="/signup"
-              >
-                Get started
-              </ButtonLink>
-            </CardContent>
-          </Card>
 
-          <Card className="border-primary/50">
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <CardTitle>{PLANS.pro.name}</CardTitle>
-                <Badge>Coming soon</Badge>
-              </div>
-              <CardDescription>For shipping a real game.</CardDescription>
-              <p className="text-3xl font-bold">
-                ${PLANS.pro.priceUsd}
-                <span className="text-sm font-normal text-muted-foreground">
-                  /month
-                </span>
-              </p>
-            </CardHeader>
-            <CardContent className="flex flex-1 flex-col gap-4">
-              <ul className="flex flex-col gap-2 text-sm">
-                {PRO_FEATURES.map((feature) => (
-                  <li key={feature} className="flex items-center gap-2">
-                    <Check className="size-4 text-success" />
-                    {feature}
-                  </li>
-                ))}
-              </ul>
-              <Button className="mt-auto" disabled>
+        <div className="grid gap-6 sm:grid-cols-2">
+          <PlanCard plan={PLANS.free} period="forever">
+            <ButtonLink variant="outline" className="w-full" href={user ? "/app" : "/signup"}>
+              {user ? "Go to your library" : "Get started"}
+            </ButtonLink>
+          </PlanCard>
+
+          <PlanCard
+            plan={PLANS.pro}
+            highlighted
+            badge={checkoutEnabled ? "Most popular" : "Coming soon"}
+          >
+            {checkoutEnabled ? (
+              // /app/billing is guarded, so a signed-out visitor is sent
+              // through login and lands straight back on checkout.
+              <ButtonLink className="w-full" href="/app/billing">
+                Upgrade to Pro
+              </ButtonLink>
+            ) : (
+              <Button className="w-full" disabled>
                 Coming soon
               </Button>
-            </CardContent>
-          </Card>
+            )}
+          </PlanCard>
         </div>
+
+        <p className="mt-8 text-center text-xs text-muted-foreground">
+          Subscriptions are billed monthly through PayPal and can be cancelled at any time.
+          Generated assets stay in your library after a downgrade.
+        </p>
       </main>
     </div>
   );

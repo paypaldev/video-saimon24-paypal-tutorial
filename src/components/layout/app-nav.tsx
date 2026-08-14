@@ -21,6 +21,12 @@ export function AppNav({ quota }: { quota: Quota }) {
           >
             Style
           </Link>
+          <Link
+            href="/app/billing"
+            className="transition-colors hover:text-foreground"
+          >
+            Billing
+          </Link>
         </nav>
         <div className="ml-auto flex items-center gap-3">
           <UsagePill quota={quota} />

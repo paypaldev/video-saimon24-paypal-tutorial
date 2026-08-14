@@ -97,7 +97,7 @@ export function GenerateForm() {
           </CardDescription>
         </CardHeader>
         <CardContent className="flex gap-3">
-          <ButtonLink href="/pricing">See plans</ButtonLink>
+          <ButtonLink href="/app/billing">Upgrade</ButtonLink>
           <ButtonLink variant="ghost" href="/app">
             Back to library
           </ButtonLink>

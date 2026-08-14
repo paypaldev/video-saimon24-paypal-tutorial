@@ -1,5 +1,6 @@
 "use client"
 
+import type { ReactNode } from "react"
 import { Progress as ProgressPrimitive } from "@base-ui/react/progress"
 
 import { cn } from "@/lib/utils"
@@ -61,7 +62,19 @@ function ProgressLabel({ className, ...props }: ProgressPrimitive.Label.Props) {
   )
 }
 
-function ProgressValue({ className, ...props }: ProgressPrimitive.Value.Props) {
+function ProgressValue({
+  className,
+  children,
+  ...props
+}: Omit<ProgressPrimitive.Value.Props, "children"> & {
+  children?: ProgressPrimitive.Value.Props["children"] | ReactNode
+}) {
+  // Base UI Value children must be a function; wrap static nodes on the client.
+  const resolvedChildren =
+    typeof children === "function" || children == null
+      ? children
+      : () => children
+
   return (
     <ProgressPrimitive.Value
       className={cn(
@@ -70,7 +83,9 @@ function ProgressValue({ className, ...props }: ProgressPrimitive.Value.Props) {
       )}
       data-slot="progress-value"
       {...props}
-    />
+    >
+      {resolvedChildren}
+    </ProgressPrimitive.Value>
   )
 }
 

@@ -15,6 +15,7 @@
   "dependencies": {
     "@base-ui/react": "^1.7.0",
     "@hookform/resolvers": "^5.7.1",
+    "@paypal/paypal-server-sdk": "^2.5.0",
     "@supabase/ssr": "^0.12.4",
     "@supabase/supabase-js": "^2.112.2",
     "class-variance-authority": "^0.7.1",

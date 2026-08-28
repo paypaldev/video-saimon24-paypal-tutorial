@@ -28,7 +28,8 @@ export const metadata: Metadata = { title: "Billing — Asset Forge" };
 const dateFormatter = new Intl.DateTimeFormat("en", { dateStyle: "medium" });
 
 export default async function BillingPage() {
-  const user = await requireUser();
+  // Gates the page; the id is no longer needed here — checkout derives it server-side.
+  await requireUser();
   const profile = await getProfile();
   const quota = getQuota(profile ?? { plan: "free", generations_used: 0 });
 
@@ -98,11 +99,7 @@ export default async function BillingPage() {
               You&apos;re on Pro
             </Button>
           ) : config ? (
-            <PaypalSubscribeButton
-              clientId={config.clientId}
-              planId={config.planId}
-              userId={user.id}
-            />
+            <PaypalSubscribeButton clientId={config.clientId} env={config.env} />
           ) : (
             <Button className="w-full" disabled>
               Coming soon

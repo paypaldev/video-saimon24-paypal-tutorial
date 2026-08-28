@@ -1,120 +1,168 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Script from "next/script";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
-// `window.paypal` is typed by the global augmentation in src/types/paypal.ts.
+import type { PaypalSdkInstance, PaypalSubscriptionSession } from "@/types/paypal";
+// `window.paypal` and <paypal-button> are typed in src/types/paypal.ts.
 
 type Props = {
-  /** Public PayPal client id — it ships in the SDK script URL by design. */
+  /** Public PayPal client id — it is browser-safe by design. */
   clientId: string;
-  /** PAYPAL_PLAN_ID_PRO, passed down from the server component. */
-  planId: string;
-  /** Becomes `custom_id` on the subscription: the only link back to the account. */
-  userId: string;
+  /**
+   * v6 serves the SDK from a different host per environment, unlike v5 where
+   * the client id alone decided which one you got.
+   */
+  env: "sandbox" | "live";
 };
 
 type Status = "loading" | "ready" | "processing" | "done" | "error";
 
-export function PaypalSubscribeButton({ clientId, planId, userId }: Props) {
+/** The plan and the buyer's account id are no longer passed in: /api/paypal/subscribe
+ *  derives both from the session when it creates the subscription. */
+export function PaypalSubscribeButton({ clientId, env }: Props) {
   const router = useRouter();
-  const containerRef = useRef<HTMLDivElement>(null);
+  const sessionRef = useRef<PaypalSubscriptionSession | null>(null);
   const [sdkReady, setSdkReady] = useState(false);
   const [status, setStatus] = useState<Status>("loading");
 
   const sdkUrl =
-    "https://www.paypal.com/sdk/js" +
-    `?client-id=${encodeURIComponent(clientId)}` +
-    "&vault=true&intent=subscription&currency=USD";
+    env === "live"
+      ? "https://www.paypal.com/web-sdk/v6/core"
+      : "https://www.sandbox.paypal.com/web-sdk/v6/core";
 
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!sdkReady || !container || !window.paypal) return;
+  const onApprove = useCallback(
+    async (subscriptionId: string) => {
+      setStatus("processing");
+      try {
+        // Server re-reads the subscription from PayPal before upgrading —
+        // the approval alone is not proof of anything.
+        const response = await fetch("/api/paypal/confirm", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ subscriptionId }),
+        });
+        const payload = await response.json();
 
-    const buttons = window.paypal.Buttons({
-      style: { layout: "vertical", color: "gold", shape: "pill", label: "subscribe" },
-
-      createSubscription(_data, actions) {
-        // custom_id travels with the subscription all the way into the
-        // webhook payload. Nothing else in that payload identifies the user.
-        return actions.subscription.create({ plan_id: planId, custom_id: userId });
-      },
-
-      async onApprove(data) {
-        const subscriptionId = data.subscriptionID;
-        if (!subscriptionId) {
+        if (!response.ok) {
           setStatus("error");
-          toast.error("PayPal did not return a subscription id.");
+          toast.error(payload?.error?.message ?? "We could not confirm your subscription.");
           return;
         }
 
-        setStatus("processing");
-        try {
-          // Server re-reads the subscription from PayPal before upgrading —
-          // the approval alone is not proof of anything.
-          const response = await fetch("/api/paypal/confirm", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ subscriptionId }),
-          });
-          const payload = await response.json();
-
-          if (!response.ok) {
-            setStatus("error");
-            toast.error(payload?.error?.message ?? "We could not confirm your subscription.");
-            return;
-          }
-
-          setStatus("done");
-          if (payload?.status === "active") {
-            toast.success("You're on Pro — your generations have been reset.");
-          } else {
-            toast.success("Payment approved. Your plan will switch over shortly.");
-          }
-          router.refresh();
-        } catch {
-          setStatus("error");
-          toast.error("We could not reach the server to confirm your subscription.");
+        setStatus("done");
+        if (payload?.status === "active") {
+          toast.success("You're on Pro — your generations have been reset.");
+        } else {
+          toast.success("Payment approved. Your plan will switch over shortly.");
         }
-      },
-
-      onCancel() {
-        toast("Checkout cancelled — nothing was charged.");
-      },
-
-      onError() {
+        router.refresh();
+      } catch {
         setStatus("error");
-        toast.error("PayPal checkout failed. Please try again.");
-      },
-    });
+        toast.error("We could not reach the server to confirm your subscription.");
+      }
+    },
+    [router],
+  );
 
-    buttons
-      .render(container)
-      .then(() => setStatus((current) => (current === "loading" ? "ready" : current)))
-      .catch(() => setStatus("error"));
+  useEffect(() => {
+    if (!sdkReady || !window.paypal) return;
+    let cancelled = false;
+
+    (async () => {
+      let sdk: PaypalSdkInstance;
+      try {
+        sdk = await window.paypal!.createInstance({
+          clientId,
+          // v6 lazily loads only the components you ask for, and subscriptions
+          // ship as their own component — the SDK's constant table lists
+          // "paypal-subscriptions" separately from "paypal-payments". Asking
+          // for both keeps the PayPal branding/eligibility bits from
+          // paypal-payments and the subscription session factory itself.
+          components: ["paypal-payments", "paypal-subscriptions"],
+          pageType: "checkout",
+        });
+      } catch {
+        if (!cancelled) setStatus("error");
+        return;
+      }
+      if (cancelled) return;
+
+      // v6 dropped v5's implicit pre-render eligibility check, so we make it
+      // ourselves. A failed *check* is not a failed checkout, though — if the
+      // eligibility service is unreachable we still show the button rather
+      // than hide the only way to pay.
+      try {
+        const methods = await sdk.findEligibleMethods({ currencyCode: "USD" });
+        if (!cancelled && !methods.isEligible("paypal")) {
+          setStatus("error");
+          return;
+        }
+      } catch {
+        // Fall through and render.
+      }
+      if (cancelled) return;
+
+      sessionRef.current = sdk.createPayPalSubscriptionSession({
+        onApprove: (data) => onApprove(data.subscriptionId),
+        onCancel: () => {
+          setStatus("ready");
+          toast("Checkout cancelled — nothing was charged.");
+        },
+        onError: () => {
+          setStatus("error");
+          toast.error("PayPal checkout failed. Please try again.");
+        },
+      });
+      setStatus("ready");
+    })();
 
     return () => {
-      try {
-        buttons.close();
-      } catch {
-        // Already torn down by the SDK.
-      }
+      cancelled = true;
+      sessionRef.current = null;
     };
-  }, [sdkReady, planId, userId, router]);
+  }, [sdkReady, clientId, onApprove]);
+
+  const handleClick = useCallback(() => {
+    const session = sessionRef.current;
+    if (!session || status === "processing" || status === "done") return;
+
+    // start() consumes the promise directly, so PayPal opens its window on
+    // this click rather than after an await — popup blockers care about that.
+    session
+      .start(
+        { presentationMode: "auto" },
+        (async () => {
+          const response = await fetch("/api/paypal/subscribe", { method: "POST" });
+          const payload = await response.json();
+          if (!response.ok || !payload?.subscriptionId) {
+            throw new Error(payload?.error?.message ?? "Could not start checkout.");
+          }
+          return { subscriptionId: payload.subscriptionId as string };
+        })(),
+      )
+      .catch(() => {
+        setStatus("error");
+        toast.error("We could not start the PayPal checkout. Please try again.");
+      });
+  }, [status]);
 
   return (
     <div className="flex flex-col gap-2">
-      <Script
-        src={sdkUrl}
-        strategy="afterInteractive"
-        onReady={() => setSdkReady(true)}
-        onError={() => setStatus("error")}
-      />
+      <Script src={sdkUrl} strategy="afterInteractive" onReady={() => setSdkReady(true)} onError={() => setStatus("error")} />
 
-      {/* PayPal renders its iframe here. */}
-      <div ref={containerRef} className={status === "done" ? "hidden" : undefined} />
+      {status === "done" ? null : (
+        <paypal-button
+          type="subscribe"
+          env={env === "live" ? "production" : "sandbox"}
+          color="gold"
+          shape="pill"
+          onClick={handleClick}
+          aria-disabled={status !== "ready"}
+        />
+      )}
 
       {status === "loading" && (
         <p className="flex items-center gap-2 text-xs text-muted-foreground">

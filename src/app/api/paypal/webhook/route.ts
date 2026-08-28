@@ -117,8 +117,8 @@ async function handleEvent(event: PaypalEvent): Promise<void> {
       let renewsAt = resource.billing_info?.next_billing_time ?? null;
       if (!userId || !renewsAt) {
         const subscription = await getSubscription(config, subscriptionId);
-        userId = userId ?? subscription?.custom_id;
-        renewsAt = renewsAt ?? subscription?.billing_info?.next_billing_time ?? null;
+        userId = userId ?? subscription?.customId;
+        renewsAt = renewsAt ?? subscription?.billingInfo?.nextBillingTime ?? null;
       }
       if (!userId) {
         console.error("[paypal] activated event without custom_id", subscriptionId);
@@ -141,7 +141,7 @@ async function handleEvent(event: PaypalEvent): Promise<void> {
       const subscription = await getSubscription(config, subscriptionId);
       const renewed = await renewPlan({
         subscriptionId,
-        renewsAt: subscription?.billing_info?.next_billing_time ?? null,
+        renewsAt: subscription?.billingInfo?.nextBillingTime ?? null,
       });
       if (!renewed) {
         throw new Error(`renewPlan failed for subscription ${subscriptionId}`);

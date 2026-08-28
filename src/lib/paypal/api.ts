@@ -1,73 +1,106 @@
 import "server-only";
+import {
+  ApiError,
+  Client,
+  Environment,
+  SubscriptionsController,
+  type OAuthToken,
+  type Subscription,
+} from "@paypal/paypal-server-sdk";
 import type { PaypalConfig } from "@/lib/paypal/config";
 
 /**
- * Thin REST client for the three PayPal calls this app makes:
- * an OAuth token, a webhook signature verification, and a subscription read.
- * No SDK dependency — same approach as lib/generation/openai.ts.
+ * PayPal access, via PayPal's official server SDK.
+ *
+ * The SDK covers three of the four calls this app makes — the OAuth token
+ * (handled internally), creating a subscription, and reading one back. It has
+ * no webhooks controller, so `verifyWebhookSignature` is still a hand-rolled
+ * request; it borrows the SDK's token manager rather than keeping a second
+ * copy of the credential handling.
  */
 
 const TIMEOUT_MS = 15_000;
 
-type CachedToken = { value: string; expiresAt: number };
-let cachedToken: CachedToken | null = null;
+/** One client per process. Config is fixed for the lifetime of the server. */
+let client: Client | null = null;
 
-async function paypalFetch(
-  config: PaypalConfig,
-  path: string,
-  init: RequestInit & { accessToken?: string } = {},
-): Promise<Response> {
-  const { accessToken, ...rest } = init;
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
-  try {
-    return await fetch(`${config.apiBase}${path}`, {
-      ...rest,
-      signal: controller.signal,
-      headers: {
-        "Content-Type": "application/json",
-        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
-        ...rest.headers,
+function getClient(config: PaypalConfig): Client {
+  if (!client) {
+    client = new Client({
+      clientCredentialsAuthCredentials: {
+        oAuthClientId: config.clientId,
+        oAuthClientSecret: config.clientSecret,
       },
+      environment: config.env === "live" ? Environment.Production : Environment.Sandbox,
+      timeout: TIMEOUT_MS,
     });
-  } finally {
-    clearTimeout(timeout);
+  }
+  return client;
+}
+
+function getSubscriptionsController(config: PaypalConfig): SubscriptionsController {
+  return new SubscriptionsController(getClient(config));
+}
+
+/**
+ * A bearer token for the one endpoint the SDK does not model. Token fetching,
+ * expiry and clock skew are the SDK's problem, not ours.
+ */
+let cachedToken: OAuthToken | undefined;
+
+async function getAccessToken(config: PaypalConfig): Promise<string> {
+  const manager = getClient(config).clientCredentialsAuthManager;
+  if (!manager.isValid(cachedToken) || manager.isExpired(cachedToken)) {
+    cachedToken = await manager.fetchToken();
+  }
+  return cachedToken.accessToken;
+}
+
+/**
+ * Creates a subscription on our Pro plan for `userId`.
+ *
+ * Both the plan and the `customId` come from the server: the browser only
+ * ever learns the resulting subscription id. That is the whole reason this
+ * call is here — under JS SDK v5 the browser chose both, and the confirm route
+ * had to catch a mismatch after the fact.
+ */
+export async function createSubscription(
+  config: PaypalConfig,
+  userId: string,
+): Promise<{ id: string; status: string } | null> {
+  try {
+    const { result } = await getSubscriptionsController(config).createSubscription({
+      body: { planId: config.planId, customId: userId },
+    });
+    if (!result.id) return null;
+    return { id: result.id, status: result.status ?? "APPROVAL_PENDING" };
+  } catch (error) {
+    // ApiError carries the PayPal response, which can echo plan/merchant
+    // detail — log the status only.
+    if (error instanceof ApiError) {
+      console.error(`[paypal] createSubscription failed (${error.statusCode})`);
+    } else {
+      console.error("[paypal] createSubscription failed", error);
+    }
+    return null;
   }
 }
 
-/** Client-credentials token, cached in memory until a minute before it expires. */
-export async function getAccessToken(config: PaypalConfig): Promise<string> {
-  if (cachedToken && cachedToken.expiresAt > Date.now()) {
-    return cachedToken.value;
+export type PaypalSubscription = Subscription;
+
+/** Reads a subscription. Returns null if PayPal does not know it. */
+export async function getSubscription(
+  config: PaypalConfig,
+  subscriptionId: string,
+): Promise<PaypalSubscription | null> {
+  try {
+    const { result } = await getSubscriptionsController(config).getSubscription({
+      id: subscriptionId,
+    });
+    return result;
+  } catch {
+    return null;
   }
-
-  const basic = Buffer.from(`${config.clientId}:${config.clientSecret}`).toString(
-    "base64",
-  );
-  const response = await paypalFetch(config, "/v1/oauth2/token", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-      Authorization: `Basic ${basic}`,
-    },
-    body: "grant_type=client_credentials",
-  });
-
-  if (!response.ok) {
-    // Never echo the response body — it can contain the client id/secret.
-    throw new Error(`PayPal auth failed (${response.status})`);
-  }
-
-  const json = (await response.json()) as { access_token?: string; expires_in?: number };
-  if (!json.access_token) {
-    throw new Error("PayPal auth returned no access token");
-  }
-
-  cachedToken = {
-    value: json.access_token,
-    expiresAt: Date.now() + Math.max(0, (json.expires_in ?? 300) - 60) * 1000,
-  };
-  return cachedToken.value;
 }
 
 const SIGNATURE_HEADERS = [
@@ -78,14 +111,23 @@ const SIGNATURE_HEADERS = [
   "paypal-transmission-time",
 ] as const;
 
+const API_BASE = {
+  sandbox: "https://api-m.sandbox.paypal.com",
+  live: "https://api-m.paypal.com",
+} as const;
+
 /**
  * Verifies a webhook delivery against PayPal.
  *
- * `rawBody` must be the exact bytes PayPal signed — that is why the route
- * reads `request.text()` before parsing. The verification payload is
- * assembled by string concatenation so the event is forwarded byte-for-byte;
- * `JSON.stringify(JSON.parse(body))` would re-order keys and re-encode
- * numbers, and the signature would no longer match.
+ * Not available through the server SDK — it models Orders, Payments, Vault,
+ * Transaction Search and Subscriptions, but not Notifications — so this stays
+ * a direct request.
+ *
+ * `rawBody` must be the exact bytes PayPal signed, which is why the route
+ * reads `request.text()` before parsing, and why the verification payload is
+ * assembled by string concatenation: `JSON.stringify(JSON.parse(body))` would
+ * re-order keys and re-encode numbers, and the signature would no longer match.
+ * That also rules out passing the event through a typed SDK model.
  */
 export async function verifyWebhookSignature(
   config: PaypalConfig,
@@ -113,38 +155,27 @@ export async function verifyWebhookSignature(
     "}";
 
   const accessToken = await getAccessToken(config);
-  const response = await paypalFetch(config, "/v1/notifications/verify-webhook-signature", {
-    method: "POST",
-    accessToken,
-    body: verificationBody,
-  });
-
-  if (!response.ok) return false;
-  const json = (await response.json()) as { verification_status?: string };
-  return json.verification_status === "SUCCESS";
-}
-
-export type PaypalSubscription = {
-  id: string;
-  status: string;
-  plan_id?: string;
-  custom_id?: string;
-  billing_info?: { next_billing_time?: string };
-};
-
-/** Reads a subscription. Returns null if PayPal does not know it. */
-export async function getSubscription(
-  config: PaypalConfig,
-  subscriptionId: string,
-): Promise<PaypalSubscription | null> {
-  const accessToken = await getAccessToken(config);
-  const response = await paypalFetch(
-    config,
-    `/v1/billing/subscriptions/${encodeURIComponent(subscriptionId)}`,
-    { method: "GET", accessToken },
-  );
-  if (!response.ok) return null;
-  return (await response.json()) as PaypalSubscription;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  try {
+    const response = await fetch(
+      `${API_BASE[config.env]}/v1/notifications/verify-webhook-signature`,
+      {
+        method: "POST",
+        signal: controller.signal,
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: verificationBody,
+      },
+    );
+    if (!response.ok) return false;
+    const json = (await response.json()) as { verification_status?: string };
+    return json.verification_status === "SUCCESS";
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 /** Where a subscriber manages or cancels their own subscription. */

@@ -51,10 +51,10 @@ export async function POST(request: Request) {
 
   // custom_id is set at checkout and is the only trustworthy link back to an
   // account. Without this check, anyone could claim any subscription id.
-  if (subscription.custom_id !== user.id) {
+  if (subscription.customId !== user.id) {
     return fail(403, "unauthorized", "That subscription belongs to another account.");
   }
-  if (subscription.plan_id && subscription.plan_id !== config.planId) {
+  if (subscription.planId && subscription.planId !== config.planId) {
     return fail(403, "unauthorized", "That subscription is not for this plan.");
   }
 
@@ -66,8 +66,10 @@ export async function POST(request: Request) {
 
   const activated = await activatePlan({
     userId: user.id,
-    subscriptionId: subscription.id,
-    renewsAt: subscription.billing_info?.next_billing_time ?? null,
+    // The SDK types `id` as optional; PayPal always returns it, and we
+    // looked the subscription up by that id in the first place.
+    subscriptionId: subscription.id ?? body.data.subscriptionId,
+    renewsAt: subscription.billingInfo?.nextBillingTime ?? null,
   });
   if (!activated) {
     return fail(500, "storage_error", "Your payment went through but the upgrade failed to save.");

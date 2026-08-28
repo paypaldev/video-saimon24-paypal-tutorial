@@ -42,13 +42,14 @@ becomes a style directive.
 ![The style JSON editor](docs/screenshots/06-style.png)
 
 **Billing, on a free account** — 5 generations, and the Pro plan carrying
-PayPal's own Subscribe and card buttons, rendered by the PayPal JS SDK.
+PayPal's own Subscribe button, rendered by the PayPal Web SDK v6.
 
 ![The billing page on a free account](docs/screenshots/09-billing-free.png)
 
 **PayPal checkout** — clicking Subscribe opens PayPal's hosted popup. The
-subscription is created with the user id as `custom_id`, which is what later
-lets the webhook match the payment back to an account.
+subscription is created server-side by `/api/paypal/subscribe` with the user id
+as `custom_id`, which is what later lets the webhook match the payment back to
+an account.
 
 <img src="docs/screenshots/10-paypal-checkout.png" alt="The PayPal checkout popup" width="380">
 
@@ -64,7 +65,8 @@ and cancelling is a link straight into PayPal. Assets are never deleted.
 ## Stack
 
 Next.js 16 (App Router, RSC, Server Actions) · TypeScript · Bun · Tailwind v4 · shadcn/ui ·
-Supabase (Postgres, Auth, Storage) · OpenAI Images API (`gpt-image-1`, plain `fetch`, no SDK).
+Supabase (Postgres, Auth, Storage) · OpenAI Images API (`gpt-image-1`, plain `fetch`, no SDK) ·
+PayPal Web SDK v6 (browser) and `@paypal/paypal-server-sdk` (server).
 
 ## Setup (under 10 minutes)
 
@@ -107,7 +109,7 @@ cp .env.example .env.local
 | `OPENAI_IMAGE_MODEL` | no | Defaults to `gpt-image-1` |
 | `APP_URL` | yes | Absolute URL for auth redirects, e.g. `http://localhost:3000` |
 | `PAYPAL_ENV` | no | `sandbox` (default) or `live` — picks the PayPal API base URL |
-| `NEXT_PUBLIC_PAYPAL_CLIENT_ID` | billing only | PayPal REST app client id (public — it ships in the SDK script URL) |
+| `NEXT_PUBLIC_PAYPAL_CLIENT_ID` | billing only | PayPal REST app client id (public — the browser SDK is initialised with it) |
 | `PAYPAL_CLIENT_SECRET` | billing only | PayPal REST app secret |
 | `PAYPAL_PLAN_ID_PRO` | billing only | The monthly Pro subscription plan id (`P-…`) |
 | `PAYPAL_WEBHOOK_ID` | billing only | Webhook id (`WH-…`), used to verify every delivery |
@@ -148,9 +150,11 @@ Open http://localhost:3000, sign up, and generate your first asset.
 - **Style**: one JSON object per user. Every scalar key becomes a prompt directive, so users can
   invent their own keys (`"mood": "cursed and dripping"`).
 - **Images** are served via short-lived signed URLs from a private bucket — nothing is public.
-- **Billing**: PayPal subscriptions. The checkout button on `/app/billing` creates a subscription
-  carrying the user id as `custom_id`; a signature-verified webhook flips the plan and resets the
-  usage counter. See below.
+- **Billing**: PayPal subscriptions. Clicking Subscribe on `/app/billing` has the server create a
+  subscription carrying the user id as `custom_id` — the browser never chooses the plan or the
+  account — and a signature-verified webhook flips the plan and resets the usage counter.
+  Server calls go through `@paypal/paypal-server-sdk`, except webhook signature verification,
+  which the SDK does not model. See below.
 
 ---
 

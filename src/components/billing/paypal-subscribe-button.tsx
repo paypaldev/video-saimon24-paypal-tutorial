@@ -18,13 +18,17 @@ type Props = {
   env: "sandbox" | "live";
 };
 
-type Status = "loading" | "ready" | "processing" | "done" | "error";
+type Status = "loading" | "ready" | "processing" | "done" | "already_pro" | "error";
 
 /** The plan and the buyer's account id are no longer passed in: /api/paypal/subscribe
  *  derives both from the session when it creates the subscription. */
 export function PaypalSubscribeButton({ clientId, env }: Props) {
   const router = useRouter();
   const sessionRef = useRef<PaypalSubscriptionSession | null>(null);
+  // Set when /api/paypal/subscribe refuses because the account is already Pro
+  // (e.g. upgraded in another tab), so the failure is not reported as a
+  // PayPal error.
+  const alreadySubscribedRef = useRef(false);
   const [sdkReady, setSdkReady] = useState(false);
   const [status, setStatus] = useState<Status>("loading");
 
@@ -112,6 +116,7 @@ export function PaypalSubscribeButton({ clientId, env }: Props) {
           toast("Checkout cancelled — nothing was charged.");
         },
         onError: () => {
+          if (alreadySubscribedRef.current) return;
           setStatus("error");
           toast.error("PayPal checkout failed. Please try again.");
         },
@@ -127,7 +132,7 @@ export function PaypalSubscribeButton({ clientId, env }: Props) {
 
   const handleClick = useCallback(() => {
     const session = sessionRef.current;
-    if (!session || status === "processing" || status === "done") return;
+    if (!session || status === "processing" || status === "done" || status === "already_pro") return;
 
     // start() consumes the promise directly, so PayPal opens its window on
     // this click rather than after an await — popup blockers care about that.
@@ -137,6 +142,9 @@ export function PaypalSubscribeButton({ clientId, env }: Props) {
         (async () => {
           const response = await fetch("/api/paypal/subscribe", { method: "POST" });
           const payload = await response.json();
+          if (response.status === 409) {
+            alreadySubscribedRef.current = true;
+          }
           if (!response.ok || !payload?.subscriptionId) {
             throw new Error(payload?.error?.message ?? "Could not start checkout.");
           }
@@ -144,16 +152,23 @@ export function PaypalSubscribeButton({ clientId, env }: Props) {
         })(),
       )
       .catch(() => {
+        if (alreadySubscribedRef.current) {
+          // Nothing was created or charged — just show the plan they have.
+          setStatus("already_pro");
+          toast("You're already on Pro — no new subscription was created.");
+          router.refresh();
+          return;
+        }
         setStatus("error");
         toast.error("We could not start the PayPal checkout. Please try again.");
       });
-  }, [status]);
+  }, [status, router]);
 
   return (
     <div className="flex flex-col gap-2">
       <Script src={sdkUrl} strategy="afterInteractive" onReady={() => setSdkReady(true)} onError={() => setStatus("error")} />
 
-      {status === "done" ? null : (
+      {status === "done" || status === "already_pro" ? null : (
         <paypal-button
           type="subscribe"
           env={env === "live" ? "production" : "sandbox"}
@@ -178,6 +193,11 @@ export function PaypalSubscribeButton({ clientId, env }: Props) {
       )}
       {status === "done" && (
         <p className="text-xs text-success">Subscription approved. Refreshing your plan…</p>
+      )}
+      {status === "already_pro" && (
+        <p className="text-xs text-muted-foreground">
+          You&apos;re already on Pro. Refreshing your plan…
+        </p>
       )}
       {status === "error" && (
         <p className="text-xs text-destructive">

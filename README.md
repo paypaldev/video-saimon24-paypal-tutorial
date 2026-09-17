@@ -113,7 +113,7 @@ cp .env.example .env.local
 | `PAYPAL_CLIENT_SECRET` | billing only | PayPal REST app secret |
 | `PAYPAL_PLAN_ID_PRO` | billing only | The monthly Pro subscription plan id (`P-…`) |
 | `PAYPAL_WEBHOOK_ID` | billing only | Webhook id (`WH-…`), used to verify every delivery |
-| `SUPABASE_SERVICE_ROLE_KEY` | billing only | Used **only** by the PayPal webhook — never sent to the browser |
+| `SUPABASE_SERVICE_ROLE_KEY` | billing only | Server-only: PayPal webhook/confirm plan writes, and refunding a credit when a generation fails — never sent to the browser |
 
 The five "billing only" variables are optional. Leave them empty and the app runs exactly as
 before, with the Pro plan shown as "Coming soon". Fill in all five to turn on checkout — see
@@ -146,7 +146,8 @@ Open http://localhost:3000, sign up, and generate your first asset.
   generation. Limits live in [src/lib/billing/plans.ts](src/lib/billing/plans.ts), not the DB.
 - **Generation** ([/api/generate](src/app/api/generate/route.ts)) is synchronous: consume credit →
   build prompt → call OpenAI (60s timeout) → upload PNG to a private bucket → insert the row.
-  Provider failures refund the credit.
+  Provider failures refund the credit — server-side only, via the service role
+  ([0004_refund_guard.sql](supabase/migrations/0004_refund_guard.sql)), so users cannot refund themselves.
 - **Style**: one JSON object per user. Every scalar key becomes a prompt directive, so users can
   invent their own keys (`"mood": "cursed and dripping"`).
 - **Images** are served via short-lived signed URLs from a private bucket — nothing is public.
@@ -261,12 +262,13 @@ bypasses RLS on purpose. It is used only in
 ### 6. Apply the migration and restart
 
 ```bash
-supabase db reset          # local; or run supabase/migrations/0003_paypal.sql in the SQL editor
+supabase db reset          # local; or run 0003_paypal.sql and 0004_refund_guard.sql in the SQL editor
 bun dev
 ```
 
 `0003_paypal.sql` adds the `webhook_events` table used for idempotency. `profiles` already has
-`plan`, `plan_renews_at` and `paypal_subscription_id` from `0001`.
+`plan`, `plan_renews_at` and `paypal_subscription_id` from `0001`. `0004_refund_guard.sql` makes the
+generation-credit refund executable by the service role only.
 
 Open `/app/billing`. If any variable is missing, the page tells you which ones (in development) and
 keeps the Pro plan disabled instead of rendering a checkout that cannot work.

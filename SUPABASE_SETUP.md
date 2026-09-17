@@ -289,6 +289,37 @@ The `protect_profile_columns()` guard from 4b checks `current_user = 'authentica
 webhook — which connects as `service_role` — can still write `plan`, `plan_renews_at`,
 `generations_used` and `paypal_subscription_id` while a signed-in user cannot.
 
+### 4d. Server-only credit refund (= `supabase/migrations/0004_refund_guard.sql`)
+
+4b grants `refund_generation_credit()` to every signed-in user, which lets anyone reset their own
+usage from the browser console. This replaces it with a version only the server (`service_role`)
+can execute. `/api/generate` calls it with `SUPABASE_SERVICE_ROLE_KEY`; without that key a failed
+generation simply does not give its credit back.
+
+```sql
+drop function if exists public.refund_generation_credit();
+
+create or replace function public.refund_generation_credit(p_user_id uuid)
+returns int
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare v_used int;
+begin
+  update public.profiles
+     set generations_used = greatest(generations_used - 1, 0),
+         updated_at = now()
+   where id = p_user_id
+  returning generations_used into v_used;
+
+  return coalesce(v_used, 0);
+end $$;
+
+revoke execute on function public.refund_generation_credit(uuid) from public, anon, authenticated;
+grant execute on function public.refund_generation_credit(uuid) to service_role;
+```
+
 ## 5. Verify
 
 Quick sanity checks in the dashboard:

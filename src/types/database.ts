@@ -127,7 +127,7 @@ export type Database = {
         Returns: number;
       };
       refund_generation_credit: {
-        Args: Record<string, never>;
+        Args: { p_user_id: string };
         Returns: number;
       };
     };

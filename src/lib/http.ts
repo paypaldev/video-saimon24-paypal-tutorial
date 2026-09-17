@@ -7,7 +7,8 @@ export type ErrorCode =
   | "provider_error"
   | "storage_error"
   | "not_found"
-  | "billing_unavailable";
+  | "billing_unavailable"
+  | "already_subscribed";
 
 export type ApiError = {
   error: { code: ErrorCode; message: string } & Record<string, unknown>;

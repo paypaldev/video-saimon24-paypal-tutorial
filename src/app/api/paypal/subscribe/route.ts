@@ -15,6 +15,11 @@ import { ok, fail } from "@/lib/http";
  * subscription sits in APPROVAL_PENDING and expires on its own, so an
  * abandoned checkout costs nothing. /api/paypal/confirm and the webhook still
  * re-read the subscription from PayPal before any plan is written.
+ *
+ * An account that is already Pro is refused: a second approved subscription
+ * would bill the buyer twice and overwrite `paypal_subscription_id`, orphaning
+ * the first one. The billing page hides the button for Pro accounts, but this
+ * route is what actually enforces it.
  */
 export async function POST() {
   const config = getPaypalConfig();
@@ -28,6 +33,14 @@ export async function POST() {
   } = await supabase.auth.getUser();
   if (!user) {
     return fail(401, "unauthorized", "You must be signed in to upgrade.");
+  }
+
+  const { data: profile } = await supabase.from("profiles").select("plan").single();
+  if (!profile) {
+    return fail(401, "unauthorized", "No profile found for this account.");
+  }
+  if (profile.plan === "pro") {
+    return fail(409, "already_subscribed", "This account already has an active Pro subscription.");
   }
 
   const subscription = await createSubscription(config, user.id);

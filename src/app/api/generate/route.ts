@@ -1,6 +1,7 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { getQuota } from "@/lib/billing/quota";
 import { styleSchema } from "@/lib/style/schema";
 import { DEFAULT_STYLE_JSON } from "@/lib/style/default";
@@ -74,7 +75,7 @@ export async function POST(request: Request) {
     image = await generateImage(prompt);
   } catch (error) {
     // 6. Provider failure: refund the credit, no asset row is written.
-    await supabase.rpc("refund_generation_credit");
+    await refundCredit(user.id);
     const message =
       error instanceof ProviderError
         ? error.message
@@ -112,4 +113,23 @@ export async function POST(request: Request) {
   // 9. Refresh the library (and the usage pill in the app shell).
   revalidatePath("/app", "layout");
   return ok({ id: assetId, remaining });
+}
+
+/**
+ * Gives back the credit consumed in step 4. The refund function is executable
+ * by the service role only (0004_refund_guard.sql) — if a signed-in user could
+ * call it, they could reset their own usage from the browser. The id always
+ * comes from the verified session, never from the request.
+ */
+async function refundCredit(userId: string): Promise<void> {
+  try {
+    const { error } = await createAdminClient().rpc("refund_generation_credit", {
+      p_user_id: userId,
+    });
+    if (error) console.error("[generate] credit refund failed", error.message);
+  } catch (error) {
+    // No SUPABASE_SERVICE_ROLE_KEY: the credit stays spent, the request still
+    // fails with the provider error below.
+    console.error("[generate] credit refund skipped", error);
+  }
 }

@@ -44,6 +44,20 @@ export async function POST(request: Request) {
     return fail(422, "invalid_input", "A subscription id is required.");
   }
 
+  // Already activated with this exact subscription (by an earlier confirm or
+  // the webhook): do nothing. activatePlan() zeroes generations_used, so
+  // replaying this request would otherwise be a free usage reset.
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("plan, paypal_subscription_id")
+    .single();
+  if (
+    profile?.plan === "pro" &&
+    profile.paypal_subscription_id === body.data.subscriptionId
+  ) {
+    return ok({ status: "active" });
+  }
+
   const subscription = await getSubscription(config, body.data.subscriptionId);
   if (!subscription) {
     return fail(404, "not_found", "That subscription could not be found at PayPal.");

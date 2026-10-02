@@ -311,3 +311,59 @@ Three rules the implementation follows:
    handler exits without re-applying it.
 3. **The account is resolved from `custom_id`**, which the checkout button sets to the user id, or
    from `paypal_subscription_id`. Nothing else in a PayPal payload identifies the customer.
+
+## Before taking this to production
+
+Asset Forge was built as an educational project to accompany a YouTube video. It shows the core
+architecture of a small AI SaaS and a working PayPal subscription integration, and it deliberately
+favours simplicity and readability over comprehensive production hardening. If you use it as the
+starting point for a real product, review the points below before going live.
+
+Above all, check your payment and subscription flow against PayPal's current developer
+documentation and requirements, starting from the
+[PayPal developer dashboard](https://developer.paypal.com/dashboard/). APIs and recommended integration practices can change, and this repository is not a substitute for that review.
+
+### Payments & billing
+
+- Validate that subscription events belong to the plan/product you expect (e.g. compare against
+  `PAYPAL_PLAN_ID_PRO`) in both the webhook and the confirm route, and reject missing IDs.
+- Webhook deliveries are deduplicated by event id; also make the state transitions themselves
+  idempotent and order-aware, so a repeated activation or a late `PAYMENT.SALE.COMPLETED` cannot
+  reset usage again or re-upgrade a cancelled account.
+- Keep Pro access until the end of the already-paid period on cancellation, instead of dropping to
+  Free immediately.
+- Handle failed PayPal lookups safely — e.g. don't overwrite `plan_renews_at` with `null` when the
+  subscription read fails.
+- Show more specific checkout error messages (for example, buyer eligibility issues).
+
+### Security & abuse prevention
+
+- Strictly validate post-login redirect targets (`next`) to same-origin paths.
+- Review Supabase RLS, grants and storage policies for production: restrict direct inserts into
+  `assets`, edits to columns like `profiles.email`, and uploads by file type, size and count.
+- Return generic auth errors so signup doesn't reveal whether an email is registered.
+- Add signup rate limiting and bot protection (CAPTCHA, email verification policies, etc.).
+
+### Reliability & API usage
+
+- Keep the image provider timeout comfortably below the route's `maxDuration`, so slow generations
+  fail cleanly instead of being cut off mid-request.
+- Refund the credit when any downstream step fails (storage upload, database insert), not only on
+  provider errors.
+- Limit expensive user-controlled inputs such as prompt length and request frequency.
+
+### Data integrity
+
+- Enforce important invariants in the database as well as the app — for example a size constraint
+  on `style_json` to match the application limit.
+- Filter profile queries explicitly by user id rather than relying on `.single()` plus RLS alone.
+- Make sure billing state in PayPal and entitlement state in `profiles` cannot drift apart.
+
+### Testing & deployment
+
+- Add automated tests for subscriptions, webhooks, credit refunds, entitlements and database
+  triggers/policies — today only `buildPrompt` is covered.
+- Route all environment access (including middleware) through the validated env config, and keep
+  server-only values out of shared modules.
+- Pin the Bun version consistently across `package.json` and CI.
+- Add monitoring and alerting for payment, webhook and generation failures.
